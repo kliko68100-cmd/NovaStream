@@ -8,32 +8,40 @@ require('dotenv').config();
 
 const app = express();
 
-// SECURITY
+// ================= SECURITY =================
 app.use(helmet({
   contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false
 }));
+
 app.use(compression());
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
-// RATE LIMIT
-const limiter = rateLimit({
+// ================= RATE LIMIT =================
+app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
-  message: 'Trop de requêtes, essaie plus tard'
-});
-app.use(limiter);
+  message: { error: 'Trop de requêtes, essaie plus tard' }
+}));
 
-// ============ VARIABLES ============
+// ================= VARIABLES =================
 const FREMBED_API = 'https://frembed.one/api/public';
-const TMDB_KEY = 'b57c7a8b5c1436d6f4d2cfff87e08ef5';
+const TMDB_KEY = process.env.TMDB_KEY;
 const TMDB_API = 'https://api.themoviedb.org/3';
 const MANGADEX_API = 'https://api.mangadex.org';
 
-// ============ PROXY ROUTES ============
+// ================= HOME ROUTE =================
+app.get('/', (req, res) => {
+  res.send('🚀 NovaStream API is running');
+});
 
-// Proxy pour contourner CORS & adblock detection
+// ================= HEALTH =================
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date() });
+});
+
+// ================= SEARCH =================
 app.get('/api/search', async (req, res) => {
   try {
     const { q, type = 'all' } = req.query;
@@ -43,7 +51,7 @@ app.get('/api/search', async (req, res) => {
       `${FREMBED_API}/search?query=${encodeURIComponent(q)}&type=${type}`,
       {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'User-Agent': 'Mozilla/5.0',
           'Accept': 'application/json',
           'Referer': 'https://frembed.one/'
         }
@@ -52,135 +60,93 @@ app.get('/api/search', async (req, res) => {
 
     res.json(data);
   } catch (err) {
-    console.error('Search error:', err);
-    res.status(500).json({ error: 'Erreur de recherche' });
+    console.error(err);
+    res.status(500).json({ error: 'Search error' });
   }
 });
 
-// Get movie/serie details
+// ================= DETAILS =================
 app.get('/api/details/:id', async (req, res) => {
   try {
-    const { id } = req.params;
-    const data = await fetch(`${FREMBED_API}/info/${id}`, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      }
-    }).then(r => r.json());
+    const data = await fetch(`${FREMBED_API}/info/${req.params.id}`)
+      .then(r => r.json());
+
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: 'Erreur détails' });
+    res.status(500).json({ error: 'Details error' });
   }
 });
 
-// Get sources (ANTI-ADBLOCK)
+// ================= SOURCES =================
 app.get('/api/sources/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { s, e } = req.query;
 
-    // Requête avec headers qui contournent la détection adblock
-    const headers = {
-      'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-      'Accept': 'application/json',
-      'Accept-Language': 'fr-FR,fr;q=0.9',
-      'Accept-Encoding': 'gzip, deflate, br',
-      'DNT': '1',
-      'Connection': 'keep-alive',
-      'Upgrade-Insecure-Requests': '1',
-      'Referer': 'https://frembed.one/',
-      'Origin': 'https://frembed.one'
-    };
-
     let url = `${FREMBED_API}/sources/${id}`;
     if (s && e) url += `?s=${s}&e=${e}`;
 
-    const response = await fetch(url, { headers });
-    const data = await response.json();
+    const data = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+        'Referer': 'https://frembed.one/'
+      }
+    }).then(r => r.json());
 
-    // Clean response
     res.json({
       sources: data.sources || [],
-      subtitles: data.subtitles || [],
-      headers: {
-        referer: 'https://frembed.one/'
-      }
+      subtitles: data.subtitles || []
     });
+
   } catch (err) {
-    console.error('Sources error:', err);
-    res.status(500).json({ error: 'Erreur sources', sources: [] });
+    console.error(err);
+    res.status(500).json({ error: 'Sources error' });
   }
 });
 
-// TMDB Proxy (trending)
+// ================= TMDB TRENDING =================
 app.get('/api/trending/:type', async (req, res) => {
   try {
-    const { type } = req.params;
-    const { page = 1 } = req.query;
-    const url = `${TMDB_API}/trending/${type}/week?api_key=${TMDB_KEY}&language=fr-FR&page=${page}`;
+    const url = `${TMDB_API}/trending/${req.params.type}/week?api_key=${TMDB_KEY}&language=fr-FR`;
     const data = await fetch(url).then(r => r.json());
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: 'Erreur TMDB' });
+    res.status(500).json({ error: 'TMDB error' });
   }
 });
 
-// Popular
+// ================= TMDB POPULAR =================
 app.get('/api/popular/:type', async (req, res) => {
   try {
-    const { type } = req.params;
-    const { page = 1 } = req.query;
-    const url = `${TMDB_API}/${type}/popular?api_key=${TMDB_KEY}&language=fr-FR&page=${page}`;
+    const url = `${TMDB_API}/${req.params.type}/popular?api_key=${TMDB_KEY}&language=fr-FR`;
     const data = await fetch(url).then(r => r.json());
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: 'Erreur TMDB' });
+    res.status(500).json({ error: 'TMDB error' });
   }
 });
 
-// MangaDex Proxy
+// ================= MANGA SEARCH =================
 app.get('/api/manga/search', async (req, res) => {
   try {
-    const { q } = req.query;
-    const url = `${MANGADEX_API}/manga?limit=20&title=${encodeURIComponent(q || '')}`;
+    const url = `${MANGADEX_API}/manga?limit=20&title=${encodeURIComponent(req.query.q || '')}`;
     const data = await fetch(url).then(r => r.json());
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: 'Erreur MangaDex' });
+    res.status(500).json({ error: 'Manga error' });
   }
 });
 
-app.get('/api/manga/chapters/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const url = `${MANGADEX_API}/manga/${id}/feed?limit=1&order[chapter]=desc&translatedLanguage[]=fr&translatedLanguage[]=en`;
-    const data = await fetch(url).then(r => r.json());
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: 'Erreur chapitres' });
-  }
+// ================= 404 =================
+app.use((req, res) => {
+  res.status(404).json({ error: 'Not Found' });
 });
 
-app.get('/api/manga/pages/:chapId', async (req, res) => {
-  try {
-    const { chapId } = req.params;
-    const url = `${MANGADEX_API}/at-home/server/${chapId}`;
-    const data = await fetch(url).then(r => r.json());
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: 'Erreur pages' });
-  }
-});
-
-// Static files
-app.use(express.static('public'));
-
-// Health check
-app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));
-
-// 404
-app.use((req, res) => res.status(404).json({ error: 'Not Found' }));
-
+// ================= START SERVER =================
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 NovaStream server sur port ${PORT}`));
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 NovaStream running on port ${PORT}`);
+});
 
 module.exports = app;
