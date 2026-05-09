@@ -1,4 +1,4 @@
-const express = require('express');
+"const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch');
 const compression = require('compression');
@@ -8,213 +8,234 @@ require('dotenv').config();
 
 const app = express();
 
-// ============ SECURITY ============
-app.use(helmet({
-  contentSecurityPolicy: false,
-  crossOriginEmbedderPolicy: false
-}));
+app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
 app.use(compression());
-
-// ============ CORS ============
-// Accepte le domaine Vercel + localhost en dev
-const allowedOrigins = [
-  process.env.FRONTEND_URL,          // ex: https://novastream.vercel.app
-  'http://localhost:3000',
-  'http://localhost:5500',
-  'http://127.0.0.1:5500'
-].filter(Boolean);
-
 app.use(cors({ origin: '*' }));
 app.use(express.json());
-// ============ RATE LIMIT ============
+
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 min
-  max: 150,
+  windowMs: 15 * 60 * 1000,
+  max: 400,
   message: { error: 'Trop de requêtes, réessaie dans 15 minutes.' }
 });
 app.use('/api/', limiter);
 
-// ============ VARIABLES (depuis .env uniquement) ============
-const TMDB_KEY = process.env.TMDB_KEY;
-const TMDB_API = 'https://api.themoviedb.org/3';
-const FREMBED_API = process.env.FREMBED_API || 'https://frembed.one/api/public';
+const TMDB_KEY     = process.env.TMDB_KEY;
+const TMDB_API     = 'https://api.themoviedb.org/3';
+const FREMBED_API  = process.env.FREMBED_API || 'https://frembed.one/api/public';
 const MANGADEX_API = 'https://api.mangadex.org';
 
-if (!TMDB_KEY) {
-  console.error('❌ TMDB_KEY manquant dans .env !');
-  process.exit(1);
-}
+if (!TMDB_KEY) { console.error('❌ TMDB_KEY manquant !'); process.exit(1); }
 
-// ============ HELPERS ============
+// ── HELPERS ────────────────────────────────────────────────
 async function tmdbFetch(path) {
-  const url = `${TMDB_API}${path}${path.includes('?') ? '&' : '?'}api_key=${TMDB_KEY}&language=fr-FR`;
-  const res = await fetch(url);
+  const sep = path.includes('?') ? '&' : '?';
+  const url = `${TMDB_API}${path}${sep}api_key=${TMDB_KEY}&language=fr-FR`;
+  const res = await fetch(url, { timeout: 12000 });
   if (!res.ok) throw new Error(`TMDB ${res.status}: ${res.statusText}`);
   return res.json();
 }
 
-async function frembedFetch(path, extraHeaders = {}) {
+async function frembedFetch(path) {
   const res = await fetch(`${FREMBED_API}${path}`, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       'Accept': 'application/json',
-      'Accept-Language': 'fr-FR,fr;q=0.9',
+      'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8',
       'Referer': 'https://frembed.one/',
-      'Origin': 'https://frembed.one',
-      'DNT': '1',
-      ...extraHeaders
-    }
+      'Origin': 'https://frembed.one'
+    },
+    timeout: 12000
   });
   if (!res.ok) throw new Error(`Frembed ${res.status}`);
   return res.json();
 }
 
-// ============ ROUTES TMDB ============
+async function mdFetch(path) {
+  const res = await fetch(`${MANGADEX_API}${path}`, { timeout: 12000 });
+  if (!res.ok) throw new Error(`MangaDex ${res.status}`);
+  return res.json();
+}
 
-// GET /api/trending/:type  → movie | tv | all
+// ── TRENDING ───────────────────────────────────────────────
 app.get('/api/trending/:type', async (req, res) => {
   try {
     const { type } = req.params;
     const { page = 1 } = req.query;
-    const data = await tmdbFetch(`/trending/${type}/week?page=${page}`);
-    res.json(data);
-  } catch (err) {
-    console.error('[trending]', err.message);
-    res.status(500).json({ error: 'Erreur TMDB trending', results: [] });
-  }
+    res.json(await tmdbFetch(`/trending/${type}/week?page=${page}`));
+  } catch (e) { res.status(500).json({ error: e.message, results: [] }); }
 });
 
-// GET /api/popular/:type  → movie | tv | person
+// ── POPULAR ────────────────────────────────────────────────
 app.get('/api/popular/:type', async (req, res) => {
   try {
     const { type } = req.params;
     const { page = 1 } = req.query;
-    const data = await tmdbFetch(`/${type}/popular?page=${page}`);
-    res.json(data);
-  } catch (err) {
-    console.error('[popular]', err.message);
-    res.status(500).json({ error: 'Erreur TMDB popular', results: [] });
-  }
+    res.json(await tmdbFetch(`/${type}/popular?page=${page}`));
+  } catch (e) { res.status(500).json({ error: e.message, results: [] }); }
 });
 
-// GET /api/search?q=...&type=all
+// ── TOP RATED ──────────────────────────────────────────────
+app.get('/api/toprated/:type', async (req, res) => {
+  try {
+    const { type } = req.params;
+    const { page = 1 } = req.query;
+    res.json(await tmdbFetch(`/${type}/top_rated?page=${page}`));
+  } catch (e) { res.status(500).json({ error: e.message, results: [] }); }
+});
+
+// ── NOW PLAYING (films au cinéma) ──────────────────────────
+app.get('/api/nowplaying', async (req, res) => {
+  try {
+    const { page = 1 } = req.query;
+    res.json(await tmdbFetch(`/movie/now_playing?page=${page}`));
+  } catch (e) { res.status(500).json({ error: e.message, results: [] }); }
+});
+
+// ── ON THE AIR (séries en cours) ───────────────────────────
+app.get('/api/onair', async (req, res) => {
+  try {
+    const { page = 1 } = req.query;
+    res.json(await tmdbFetch(`/tv/on_the_air?page=${page}`));
+  } catch (e) { res.status(500).json({ error: e.message, results: [] }); }
+});
+
+// ── ANIME (animation japonaise avec filtre genre) ──────────
+app.get('/api/anime', async (req, res) => {
+  try {
+    const { page = 1, genre = '', sort = 'popularity.desc' } = req.query;
+    let genres = '16';
+    if (genre && genre !== '16') genres = `16,${genre}`;
+    const path = `/discover/tv?with_genres=${genres}&sort_by=${sort}&page=${page}&with_original_language=ja&vote_count.gte=10`;
+    res.json(await tmdbFetch(path));
+  } catch (e) { res.status(500).json({ error: e.message, results: [] }); }
+});
+
+// ── SEARCH ─────────────────────────────────────────────────
 app.get('/api/search', async (req, res) => {
   try {
     const { q, type = 'multi', page = 1 } = req.query;
     if (!q) return res.json({ results: [] });
-
-    // Recherche TMDB (multi = films + séries + personnes)
-    const data = await tmdbFetch(`/search/${type}?query=${encodeURIComponent(q)}&page=${page}&include_adult=false`);
-    res.json(data);
-  } catch (err) {
-    console.error('[search]', err.message);
-    res.status(500).json({ error: 'Erreur recherche', results: [] });
-  }
+    res.json(await tmdbFetch(`/search/${type}?query=${encodeURIComponent(q)}&page=${page}&include_adult=false`));
+  } catch (e) { res.status(500).json({ error: e.message, results: [] }); }
 });
 
-// GET /api/details/movie/:id  ou  /api/details/tv/:id
+// ── DETAILS ────────────────────────────────────────────────
 app.get('/api/details/:type/:id', async (req, res) => {
   try {
     const { type, id } = req.params;
-    const data = await tmdbFetch(`/${type}/${id}?append_to_response=credits,videos,similar`);
-    res.json(data);
-  } catch (err) {
-    console.error('[details]', err.message);
-    res.status(500).json({ error: 'Erreur détails' });
-  }
+    res.json(await tmdbFetch(`/${type}/${id}?append_to_response=credits,videos,similar,external_ids`));
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ============ ROUTES SOURCES (Frembed) ============
+// ── GENRES ─────────────────────────────────────────────────
+app.get('/api/genres/:type', async (req, res) => {
+  try {
+    const { type } = req.params;
+    res.json(await tmdbFetch(`/genre/${type}/list`));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
-// GET /api/sources/:id?type=movie|tv&s=1&e=1
+// ── SEASON DETAILS (épisodes + synopsis + stills) ──────────
+app.get('/api/season/:showId/:season', async (req, res) => {
+  try {
+    const { showId, season } = req.params;
+    res.json(await tmdbFetch(`/tv/${showId}/season/${season}`));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── EPISODE DETAILS ────────────────────────────────────────
+app.get('/api/episode/:showId/:season/:ep', async (req, res) => {
+  try {
+    const { showId, season, ep } = req.params;
+    res.json(await tmdbFetch(`/tv/${showId}/season/${season}/episode/${ep}`));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── SOURCES (Frembed) ──────────────────────────────────────
 app.get('/api/sources/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { type = 'movie', s, e } = req.query;
-
     let path = `/sources/${id}?type=${type}`;
     if (s && e) path += `&s=${s}&e=${e}`;
-
     const data = await frembedFetch(path);
-
     res.json({
-      sources: data.sources || [],
+      sources:   data.sources   || [],
       subtitles: data.subtitles || [],
-      headers: { referer: 'https://frembed.one/' }
+      headers:   { referer: 'https://frembed.one/' }
     });
-  } catch (err) {
-    console.error('[sources]', err.message);
-    res.status(500).json({ error: 'Erreur sources', sources: [] });
+  } catch (e) {
+    console.error('[sources]', e.message);
+    res.status(500).json({ error: 'Sources Frembed indisponibles', sources: [] });
   }
 });
 
-// ============ ROUTES MANGADEX ============
+// ── MANGADEX — liste ───────────────────────────────────────
+app.get('/api/manga/list', async (req, res) => {
+  try {
+    const { limit = 20, offset = 0 } = req.query;
+    const data = await mdFetch(
+      `/manga?limit=${limit}&offset=${offset}&order[followedCount]=desc&includes[]=cover_art&availableTranslatedLanguage[]=fr&availableTranslatedLanguage[]=en&contentRating[]=safe&contentRating[]=suggestive`
+    );
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message, data: [] }); }
+});
 
-// GET /api/manga/search?q=...
+// ── MANGADEX — recherche ───────────────────────────────────
 app.get('/api/manga/search', async (req, res) => {
   try {
     const { q = '' } = req.query;
-    const url = `${MANGADEX_API}/manga?limit=20&title=${encodeURIComponent(q)}&order[followedCount]=desc`;
-    const data = await fetch(url).then(r => r.json());
+    const data = await mdFetch(
+      `/manga?limit=20&title=${encodeURIComponent(q)}&order[followedCount]=desc&includes[]=cover_art&availableTranslatedLanguage[]=fr&availableTranslatedLanguage[]=en&contentRating[]=safe&contentRating[]=suggestive`
+    );
     res.json(data);
-  } catch (err) {
-    console.error('[manga/search]', err.message);
-    res.status(500).json({ error: 'Erreur MangaDex', data: [] });
-  }
+  } catch (e) { res.status(500).json({ error: e.message, data: [] }); }
 });
 
-// GET /api/manga/chapters/:id
+// ── MANGADEX — chapitres ───────────────────────────────────
 app.get('/api/manga/chapters/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const url = `${MANGADEX_API}/manga/${id}/feed?limit=100&order[chapter]=desc&translatedLanguage[]=fr&translatedLanguage[]=en`;
-    const data = await fetch(url).then(r => r.json());
+    const data = await mdFetch(
+      `/manga/${id}/feed?limit=500&order[volume]=desc&order[chapter]=desc&translatedLanguage[]=fr&translatedLanguage[]=en&includes[]=scanlation_group&contentRating[]=safe&contentRating[]=suggestive`
+    );
     res.json(data);
-  } catch (err) {
-    console.error('[manga/chapters]', err.message);
-    res.status(500).json({ error: 'Erreur chapitres' });
-  }
+  } catch (e) { res.status(500).json({ error: e.message, data: [] }); }
 });
 
-// GET /api/manga/pages/:chapId
+// ── MANGADEX — pages ───────────────────────────────────────
 app.get('/api/manga/pages/:chapId', async (req, res) => {
   try {
     const { chapId } = req.params;
-    const url = `${MANGADEX_API}/at-home/server/${chapId}`;
-    const data = await fetch(url).then(r => r.json());
-    res.json(data);
-  } catch (err) {
-    console.error('[manga/pages]', err.message);
-    res.status(500).json({ error: 'Erreur pages' });
-  }
+    res.json(await mdFetch(`/at-home/server/${chapId}`));
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ============ HEALTH CHECK ============
+// ── HEALTH ─────────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({
   status: 'ok',
+  version: '4.0.0',
   timestamp: new Date().toISOString(),
-  version: '2.0.0'
+  frembed: FREMBED_API
 }));
 
-// ============ 404 ============
+// ── 404 ────────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ error: 'Route introuvable' }));
 
-// ============ ERROR HANDLER ============
+// ── ERROR ──────────────────────────────────────────────────
 app.use((err, req, res, next) => {
   console.error('Erreur globale:', err.message);
-  if (err.message.startsWith('CORS')) {
-    return res.status(403).json({ error: err.message });
-  }
   res.status(500).json({ error: 'Erreur serveur interne' });
 });
 
-// ============ START ============
+// ── START ──────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 NovaStream API démarrée sur le port ${PORT}`);
-  console.log(`📡 TMDB_KEY: ${TMDB_KEY ? '✅ chargée' : '❌ MANQUANTE'}`);
-  console.log(`🔗 FREMBED_API: ${FREMBED_API}`);
-  console.log(`🌐 Frontend autorisé: ${process.env.FRONTEND_URL || '* (tous)'}`);
+  console.log(`🚀 NovaStream API v4.0 — port ${PORT}`);
+  console.log(`📡 TMDB_KEY : ${TMDB_KEY ? '✅ chargée' : '❌ MANQUANTE'}`);
+  console.log(`🎬 Frembed  : ${FREMBED_API}`);
 });
 
 module.exports = app;
+"
