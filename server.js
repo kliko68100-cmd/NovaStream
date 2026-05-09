@@ -24,19 +24,7 @@ const allowedOrigins = [
   'http://127.0.0.1:5500'
 ].filter(Boolean);
 
-app.use(cors({
-  origin: function (origin, callback) {
-    // Autorise les requêtes sans origin (ex: Postman, curl)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    // En développement ou si FRONTEND_URL n'est pas défini, tout autoriser
-    if (!process.env.FRONTEND_URL) return callback(null, true);
-    return callback(new Error('CORS: origine non autorisée → ' + origin));
-  },
-  credentials: true
-}));
-
-app.use(express.json());
+app.use(cors({ origin: '*' }));
 
 // ============ RATE LIMIT ============
 const limiter = rateLimit({
