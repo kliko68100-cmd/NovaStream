@@ -25,7 +25,7 @@ const allowedOrigins = [
 ].filter(Boolean);
 
 app.use(cors({ origin: '*' }));
-
+app.use(express.json());
 // ============ RATE LIMIT ============
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 min
