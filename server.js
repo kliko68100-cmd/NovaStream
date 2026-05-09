@@ -1,4 +1,4 @@
-"const express = require('express');
+const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch');
 const compression = require('compression');
@@ -15,14 +15,14 @@ app.use(express.json());
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 400,
+  max: 300,
   message: { error: 'Trop de requêtes, réessaie dans 15 minutes.' }
 });
 app.use('/api/', limiter);
 
-const TMDB_KEY     = process.env.TMDB_KEY;
-const TMDB_API     = 'https://api.themoviedb.org/3';
-const FREMBED_API  = process.env.FREMBED_API || 'https://frembed.one/api/public';
+const TMDB_KEY   = process.env.TMDB_KEY;
+const TMDB_API   = 'https://api.themoviedb.org/3';
+const FREMBED_API = process.env.FREMBED_API || 'https://frembed.one/api/public';
 const MANGADEX_API = 'https://api.mangadex.org';
 
 if (!TMDB_KEY) { console.error('❌ TMDB_KEY manquant !'); process.exit(1); }
@@ -100,13 +100,15 @@ app.get('/api/onair', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message, results: [] }); }
 });
 
-// ── ANIME (animation japonaise avec filtre genre) ──────────
+// ── ANIME (découverte animation japonaise avec genre filter) ─
+// Genres TMDB TV : 10759=Action&Adventure, 35=Comedy, 80=Crime, 18=Drama,
+// 10751=Family, 10762=Kids, 9648=Mystery, 10765=Sci-Fi&Fantasy, 10766=Soap,
+// 10767=Talk, 10768=War&Politics, 37=Western
 app.get('/api/anime', async (req, res) => {
   try {
-    const { page = 1, genre = '', sort = 'popularity.desc' } = req.query;
-    let genres = '16';
-    if (genre && genre !== '16') genres = `16,${genre}`;
-    const path = `/discover/tv?with_genres=${genres}&sort_by=${sort}&page=${page}&with_original_language=ja&vote_count.gte=10`;
+    const { page = 1, genre = '' } = req.query;
+    let path = `/discover/tv?with_genres=16&sort_by=popularity.desc&page=${page}&with_original_language=ja`;
+    if (genre && genre !== '16') path += `&with_genres=16,${genre}`;
     res.json(await tmdbFetch(path));
   } catch (e) { res.status(500).json({ error: e.message, results: [] }); }
 });
@@ -136,7 +138,7 @@ app.get('/api/genres/:type', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── SEASON DETAILS (épisodes + synopsis + stills) ──────────
+// ── SEASON DETAILS (épisodes + synopsis) ───────────────────
 app.get('/api/season/:showId/:season', async (req, res) => {
   try {
     const { showId, season } = req.params;
@@ -174,23 +176,23 @@ app.get('/api/sources/:id', async (req, res) => {
 // ── MANGADEX — liste ───────────────────────────────────────
 app.get('/api/manga/list', async (req, res) => {
   try {
-    const { limit = 20, offset = 0 } = req.query;
+    const { limit = 20, offset = 0, lang = 'fr' } = req.query;
     const data = await mdFetch(
-      `/manga?limit=${limit}&offset=${offset}&order[followedCount]=desc&includes[]=cover_art&availableTranslatedLanguage[]=fr&availableTranslatedLanguage[]=en&contentRating[]=safe&contentRating[]=suggestive`
+      `/manga?limit=${limit}&offset=${offset}&order[followedCount]=desc&includes[]=cover_art&availableTranslatedLanguage[]=${lang}&availableTranslatedLanguage[]=en`
     );
     res.json(data);
-  } catch (e) { res.status(500).json({ error: e.message, data: [] }); }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── MANGADEX — recherche ───────────────────────────────────
 app.get('/api/manga/search', async (req, res) => {
   try {
-    const { q = '' } = req.query;
+    const { q = '', lang = 'fr' } = req.query;
     const data = await mdFetch(
-      `/manga?limit=20&title=${encodeURIComponent(q)}&order[followedCount]=desc&includes[]=cover_art&availableTranslatedLanguage[]=fr&availableTranslatedLanguage[]=en&contentRating[]=safe&contentRating[]=suggestive`
+      `/manga?limit=20&title=${encodeURIComponent(q)}&order[followedCount]=desc&includes[]=cover_art&availableTranslatedLanguage[]=${lang}&availableTranslatedLanguage[]=en`
     );
     res.json(data);
-  } catch (e) { res.status(500).json({ error: e.message, data: [] }); }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── MANGADEX — chapitres ───────────────────────────────────
@@ -198,10 +200,10 @@ app.get('/api/manga/chapters/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const data = await mdFetch(
-      `/manga/${id}/feed?limit=500&order[volume]=desc&order[chapter]=desc&translatedLanguage[]=fr&translatedLanguage[]=en&includes[]=scanlation_group&contentRating[]=safe&contentRating[]=suggestive`
+      `/manga/${id}/feed?limit=500&order[volume]=asc&order[chapter]=asc&translatedLanguage[]=fr&translatedLanguage[]=en&includes[]=scanlation_group`
     );
     res.json(data);
-  } catch (e) { res.status(500).json({ error: e.message, data: [] }); }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── MANGADEX — pages ───────────────────────────────────────
@@ -215,7 +217,7 @@ app.get('/api/manga/pages/:chapId', async (req, res) => {
 // ── HEALTH ─────────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({
   status: 'ok',
-  version: '4.0.0',
+  version: '3.0.0',
   timestamp: new Date().toISOString(),
   frembed: FREMBED_API
 }));
@@ -232,10 +234,10 @@ app.use((err, req, res, next) => {
 // ── START ──────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 NovaStream API v4.0 — port ${PORT}`);
+  console.log(`🚀 NovaStream API v3.0 — port ${PORT}`);
   console.log(`📡 TMDB_KEY : ${TMDB_KEY ? '✅ chargée' : '❌ MANQUANTE'}`);
   console.log(`🎬 Frembed  : ${FREMBED_API}`);
+  console.log(`🌐 Frontend : ${process.env.FRONTEND_URL || '* (tous)'}`);
 });
 
 module.exports = app;
-"
