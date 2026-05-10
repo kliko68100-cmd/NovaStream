@@ -28,14 +28,12 @@ const MANGADEX_API = 'https://api.mangadex.org';
 
 if (!TMDB_KEY) { console.error('❌ TMDB_KEY manquant !'); process.exit(1); }
 
-// ── SERVE STATIC FILES (index.html + sw.js) ──────────────────
-// Si index.html et sw.js sont dans le même dossier que server.js
+// ── SERVE STATIC FILES ──────────────────────────────────────────
 app.get('/', (req, res) => {
   const f = path.join(__dirname, 'index.html');
   res.sendFile(f, err => { if (err) res.status(404).json({ error: 'index.html introuvable' }); });
 });
 
-// Service Worker servi depuis la racine (même origine = essentiel)
 app.get('/sw.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');
   res.setHeader('Service-Worker-Allowed', '/');
@@ -43,7 +41,6 @@ app.get('/sw.js', (req, res) => {
   const f = path.join(__dirname, 'sw.js');
   res.sendFile(f, err => {
     if (err) {
-      // SW fallback inline si fichier absent
       res.send(`
         const AD_HOSTS=['doubleclick.net','googlesyndication.com','adnxs.com',
           'popads.net','popcash.net','trafficjunky.net','juicyads.com',
@@ -63,7 +60,7 @@ app.get('/sw.js', (req, res) => {
   });
 });
 
-// ── HELPERS ────────────────────────────────────────────────────
+// ── HELPERS ─────────────────────────────────────────────────────
 async function tmdbFetch(path, lang = 'fr-FR') {
   const sep = path.includes('?') ? '&' : '?';
   const url = `${TMDB_API}${path}${sep}api_key=${TMDB_KEY}&language=${lang}`;
@@ -212,13 +209,11 @@ app.get('/api/sources/:id', async (req, res) => {
     const frembedLang = lang === 'vostfr' ? 'vostfr' : 'vf';
 
     let data;
-    // Tentative 1 : avec la langue demandée
     try {
       let path = `/sources/${id}?type=${type}&lang=${frembedLang}`;
       if (s && e) path += `&s=${s}&e=${e}`;
       data = await frembedFetch(path);
     } catch (_) {
-      // Tentative 2 : sans filtre langue
       try {
         let path = `/sources/${id}?type=${type}`;
         if (s && e) path += `&s=${s}&e=${e}`;
@@ -231,7 +226,6 @@ app.get('/api/sources/:id', async (req, res) => {
     let sources   = data.sources   || [];
     let subtitles = data.subtitles || [];
 
-    // Pour VOSTFR : garder uniquement les sous-titres français
     if (lang === 'vostfr') {
       const frSubs = subtitles.filter(sub => {
         const l = (sub.lang || sub.language || sub.label || '').toLowerCase();
@@ -240,7 +234,6 @@ app.get('/api/sources/:id', async (req, res) => {
       if (frSubs.length) subtitles = frSubs;
     }
 
-    // Exclure les sources labellisées VO anglaise pure
     sources = sources.filter(src => {
       const label = (src.label || src.quality || '').toLowerCase();
       return !label.match(/\ben\b/) && !label.includes('english only');
@@ -263,12 +256,36 @@ app.get('/api/sources/:id', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════
-//  MANGADEX — Endpoints améliorés
+//  MANGADEX
 // ═══════════════════════════════════════════════════════
 
-// Paramètres communs MangaDex
 const MD_BASE_PARAMS = 'includes[]=cover_art&includes[]=author';
 const MD_LANGS = 'availableTranslatedLanguage[]=fr&availableTranslatedLanguage[]=en';
+
+// ── PROXY COVER IMAGE (résout le CORS/hotlink MangaDex) ────────
+// FIX: MangaDex bloque les requêtes d'images directes depuis un domaine tiers.
+// Ce proxy backend sert l'image avec les bons headers.
+app.get('/api/manga/cover/:mangaId/:filename', async (req, res) => {
+  try {
+    const { mangaId, filename } = req.params;
+    const { size = '512' } = req.query;
+    const url = `https://uploads.mangadex.org/covers/${mangaId}/${filename}.${size}.jpg`;
+    const imgRes = await fetch(url, {
+      headers: {
+        'User-Agent': 'NovaStream/3.2 (contact@novastream.fr)',
+        'Referer': 'https://mangadex.org/'
+      },
+      timeout: 10000
+    });
+    if (!imgRes.ok) throw new Error(`Cover ${imgRes.status}`);
+    res.setHeader('Content-Type', imgRes.headers.get('content-type') || 'image/jpeg');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    imgRes.body.pipe(res);
+  } catch (e) {
+    console.error('[manga/cover]', e.message);
+    res.status(404).end();
+  }
+});
 
 // ── MANGA LIST ─────────────────────────────────────────────────
 app.get('/api/manga/list', async (req, res) => {
@@ -281,7 +298,7 @@ app.get('/api/manga/list', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── MANGA TRENDING (les plus suivis) ──────────────────────────
+// ── MANGA TRENDING ─────────────────────────────────────────────
 app.get('/api/manga/trending', async (req, res) => {
   try {
     const { limit = 30, offset = 0 } = req.query;
@@ -292,7 +309,7 @@ app.get('/api/manga/trending', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── MANGA LATEST (dernières mises à jour) ─────────────────────
+// ── MANGA LATEST ───────────────────────────────────────────────
 app.get('/api/manga/latest', async (req, res) => {
   try {
     const { limit = 30, offset = 0 } = req.query;
@@ -303,7 +320,7 @@ app.get('/api/manga/latest', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── MANGA TOP RATED ───────────────────────────────────────────
+// ── MANGA TOP RATED ────────────────────────────────────────────
 app.get('/api/manga/toprated', async (req, res) => {
   try {
     const { limit = 20, offset = 0 } = req.query;
@@ -314,11 +331,10 @@ app.get('/api/manga/toprated', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── MANGA GENRES (tags) ───────────────────────────────────────
+// ── MANGA TAGS ─────────────────────────────────────────────────
 app.get('/api/manga/tags', async (req, res) => {
   try {
     const data = await mdFetch('/manga/tag');
-    // Ne retourner que les genres (group = genre)
     const genres = (data.data || []).filter(t =>
       t.attributes?.group === 'genre'
     ).map(t => ({
@@ -330,7 +346,7 @@ app.get('/api/manga/tags', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message, data: [] }); }
 });
 
-// ── MANGA BY TAG ──────────────────────────────────────────────
+// ── MANGA BY TAG ───────────────────────────────────────────────
 app.get('/api/manga/bytag/:tagId', async (req, res) => {
   try {
     const { tagId } = req.params;
@@ -342,7 +358,7 @@ app.get('/api/manga/bytag/:tagId', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── MANGA SEARCH ──────────────────────────────────────────────
+// ── MANGA SEARCH ───────────────────────────────────────────────
 app.get('/api/manga/search', async (req, res) => {
   try {
     const { q = '' } = req.query;
@@ -353,7 +369,7 @@ app.get('/api/manga/search', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── MANGA DETAILS ─────────────────────────────────────────────
+// ── MANGA DETAILS ──────────────────────────────────────────────
 app.get('/api/manga/details/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -362,18 +378,40 @@ app.get('/api/manga/details/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── MANGA CHAPTERS ────────────────────────────────────────────
+// ── MANGA CHAPTERS ─────────────────────────────────────────────
+// FIX: on récupère FR + EN mais on trie FR en premier
 app.get('/api/manga/chapters/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const data = await mdFetch(
       `/manga/${id}/feed?limit=500&order[volume]=asc&order[chapter]=asc&translatedLanguage[]=fr&translatedLanguage[]=en&includes[]=scanlation_group`
     );
+
+    // Trier : chapitres FR d'abord, puis EN pour les numéros manquants
+    if (data?.data?.length) {
+      // Grouper par numéro de chapitre
+      const chapMap = {};
+      for (const ch of data.data) {
+        const num = ch.attributes?.chapter || '0';
+        if (!chapMap[num]) chapMap[num] = [];
+        chapMap[num].push(ch);
+      }
+      // Pour chaque numéro, préférer FR
+      const sorted = Object.keys(chapMap)
+        .sort((a, b) => parseFloat(a) - parseFloat(b))
+        .map(num => {
+          const group = chapMap[num];
+          const fr = group.find(c => c.attributes?.translatedLanguage === 'fr');
+          return fr || group[0];
+        });
+      data.data = sorted;
+    }
+
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── MANGA PAGES ───────────────────────────────────────────────
+// ── MANGA PAGES ────────────────────────────────────────────────
 app.get('/api/manga/pages/:chapId', async (req, res) => {
   try {
     const { chapId } = req.params;
@@ -384,27 +422,23 @@ app.get('/api/manga/pages/:chapId', async (req, res) => {
 // ── HEALTH ─────────────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({
   status: 'ok',
-  version: '3.2.0',
+  version: '3.3.0',
   timestamp: new Date().toISOString(),
-  features: ['discover', 'genre-filter', 'vf-vostfr', 'manga-v2', 'adblock-sw', 'hls-audio-select']
+  features: ['discover', 'genre-filter', 'vf-vostfr', 'manga-v3', 'cover-proxy', 'fr-chapters', 'adblock-sw', 'hls-audio-select']
 }));
 
-// ── 404 ────────────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ error: 'Route introuvable' }));
-
-// ── ERROR ──────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
   console.error('Erreur globale:', err.message);
   res.status(500).json({ error: 'Erreur serveur interne' });
 });
 
-// ── START ──────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 NovaStream API v3.2 — port ${PORT}`);
+  console.log(`🚀 NovaStream API v3.3 — port ${PORT}`);
   console.log(`📡 TMDB_KEY : ${TMDB_KEY ? '✅' : '❌ MANQUANTE'}`);
   console.log(`🎬 Frembed  : ${FREMBED_API}`);
-  console.log(`📚 Manga    : trending/latest/tags/bytag activés`);
+  console.log(`📚 Manga    : cover-proxy + chapitres FR prioritaires`);
   console.log(`🛡️  SW adblock : /sw.js servi`);
 });
 
