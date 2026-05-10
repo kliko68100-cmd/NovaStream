@@ -107,8 +107,8 @@ app.get('/api/onair', async (req, res) => {
 app.get('/api/anime', async (req, res) => {
   try {
     const { page = 1, genre = '' } = req.query;
-    let path = `/discover/tv?with_genres=16&sort_by=popularity.desc&page=${page}&with_original_language=ja`;
-    if (genre && genre !== '16') path += `&with_genres=16,${genre}`;
+    const genreFilter = genre ? `16,${genre}` : '16';
+    const path = `/discover/tv?with_genres=${genreFilter}&sort_by=popularity.desc&page=${page}&with_original_language=ja`;
     res.json(await tmdbFetch(path));
   } catch (e) { res.status(500).json({ error: e.message, results: [] }); }
 });
